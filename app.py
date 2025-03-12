@@ -34,7 +34,7 @@ class APIEasy:
     def send_message(self, prompt):
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash", 
+                model=" gemini-2.0-flash-lite-001", 
                 contents=prompt, 
                 config=self.config_model
             )
