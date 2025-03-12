@@ -5,6 +5,13 @@ import os
 from google import genai
 from google.genai import types
 
+os.environ['GEMINI_API_KEY'] = st.secrets['GEMINI_API_KEY']
+
+# Получение API ключа из переменной окружения
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MODEL_TEMPERATURE = 1
+MODEL_TOP_P = 0.95 
+
 # Функция для извлечения JSON из ответа модели
 def extract_code_json(markdown_string):
     matches = re.compile(r'```(?:json)?\n(.*?)\n```', re.DOTALL).findall(markdown_string)
@@ -23,18 +30,17 @@ def extract_code_json(markdown_string):
 
 # Класс для работы с API Gemini
 class APIEasy:
-    def __init__(self, api_key, temperature=0, top_p=1, seed=42):
+    def __init__(self, api_key, temperature=MODEL_TEMPERATURE, top_p=MODEL_TOP_P):
         self.client = genai.Client(api_key=api_key)
         self.config_model = types.GenerateContentConfig(
             temperature=temperature,
             top_p=top_p,
-            seed=seed,
         )
 
     def send_message(self, prompt):
         try:
             response = self.client.models.generate_content(
-                model=" gemini-2.0-flash-lite-001", 
+                model="gemini-2.0-flash", 
                 contents=prompt, 
                 config=self.config_model
             )
@@ -47,44 +53,24 @@ class APIEasy:
 st.set_page_config(
     page_title="Упражнения по русскому языку",
     page_icon="📚",
-    layout="wide"
 )
 
 # Заголовок приложения
 st.title("Упражнения по русскому языку")
 
-# Боковая панель для ввода API ключа
-with st.sidebar:
-    st.header("Настройки")
-    api_key = st.text_input("Введите API ключ Gemini:", type="password")
-    st.markdown("---")
-    st.markdown("Приложение для генерации и проверки упражнений по русскому языку")
+# Проверка наличия API ключа
+if not GEMINI_API_KEY:
+    st.error("API ключ не найден. Установите переменную окружения GEMINI_API_KEY.")
+    st.stop()
 
-# Основная часть приложения
-if not api_key:
-    st.warning("Пожалуйста, введите API ключ Gemini в боковой панели")
-else:
-    # Инициализация API
-    api = APIEasy(api_key=api_key)
-    
-    # Ввод темы для упражнений
-    st.subheader("Создание упражнений")
-    
-    # Примеры тем
-    st.markdown("""
-    **Примеры тем:**
-    - н и нн в причастиях
-    - Правописание приставок пре- и при-
-    - Правописание безударных гласных в корне
-    - Правописание -тся и -ться в глаголах
-    - Знаки препинания в сложном предложении
-    """)
-    
-    # Поле для ввода темы
-    theme = st.text_input("Введите тему для упражнений:", value="н и нн в причастиях")
-    
-    # Шаблон промта
-    prompt_template = """Ты - учитель русского языка.
+# Инициализация API с ключом из переменной окружения
+api = APIEasy(api_key=GEMINI_API_KEY)
+
+# Поле для ввода темы
+theme = st.text_input("Введите тему для упражнений:", value="н и нн в причастиях")
+
+# Шаблон промта
+prompt_template = """Ты - учитель русского языка.
 
 ** Требования ** 
 1) Одно упражнение - одно предложение
@@ -102,77 +88,71 @@ else:
     {"упражнение": "...", "ответ": "..."}
 ]
 """
-    prompt_template1 = """** Тема **
-    {theme}
-    """
+prompt_template1 = """** Тема **
+{theme}
+"""
+
+# Формирование промта с выбранной темой
+prompt = prompt_template1.format(theme=theme)
+prompt = prompt_template + prompt
+
+if st.button("Сгенерировать упражнения"):
+    with st.spinner("Генерация упражнений..."):
+        response = api.send_message(prompt)
+        if response:
+            exercises = extract_code_json(response)
+            if exercises and isinstance(exercises, list):
+                # Сохраняем упражнения в session_state
+                st.session_state.exercises = exercises
+                st.session_state.user_answers = [""] * len(exercises)
+                st.success(f"Сгенерировано {len(exercises)} упражнений!")
+            else:
+                st.error("Не удалось получить упражнения в правильном формате")
+
+# Отображение упражнений и ввод ответов
+if 'exercises' in st.session_state and st.session_state.exercises:
+    st.subheader("Упражнения")
     
-    # Формирование промта с выбранной темой
-    prompt = prompt_template1.format(theme=theme)
-    prompt = prompt_template + prompt
+    for i, exercise in enumerate(st.session_state.exercises):
+        col1, col2 = st.columns([3, 1])
+        
+        # Получаем текст упражнения
+        exercise_text = exercise.get("упражнение", "")
+        
+        with col1:
+            st.markdown(f"**{i+1}. {exercise_text}**")
+        
+        with col2:
+            # Поле для ввода ответа
+            st.session_state.user_answers[i] = st.text_input(
+                f"Ответ {i+1}", 
+                key=f"answer_{i}",
+                value=st.session_state.user_answers[i] if 'user_answers' in st.session_state else ""
+            )
     
-    # Показать промт (скрыто по умолчанию)
-    with st.expander("Показать полный промт"):
-        st.text_area("Промт для генерации:", value=prompt, height=300, disabled=True)
-    
-    if st.button("Сгенерировать упражнения"):
-        with st.spinner("Генерация упражнений..."):
-            response = api.send_message(prompt)
-            if response:
-                exercises = extract_code_json(response)
-                if exercises and isinstance(exercises, list):
-                    # Сохраняем упражнения в session_state
-                    st.session_state.exercises = exercises
-                    st.session_state.user_answers = [""] * len(exercises)
-                    st.success(f"Сгенерировано {len(exercises)} упражнений!")
-                else:
-                    st.error("Не удалось получить упражнения в правильном формате")
-    
-    # Отображение упражнений и ввод ответов
-    if 'exercises' in st.session_state and st.session_state.exercises:
-        st.subheader("Упражнения")
+    # Кнопка проверки
+    if st.button("Проверить ответы"):
+        correct_count = 0
         
         for i, exercise in enumerate(st.session_state.exercises):
-            col1, col2 = st.columns([3, 1])
+            user_answer = st.session_state.user_answers[i].strip()
+            correct_answer = exercise.get("ответ", "").strip()
             
-            # Получаем текст упражнения и заменяем многоточие на поле ввода
-            exercise_text = exercise.get("упражнение", "")
-            
-            with col1:
-                st.markdown(f"**{i+1}. {exercise_text}**")
-            
-            with col2:
-                # Поле для ввода ответа
-                st.session_state.user_answers[i] = st.text_input(
-                    f"Ответ {i+1}", 
-                    key=f"answer_{i}",
-                    value=st.session_state.user_answers[i] if 'user_answers' in st.session_state else ""
-                )
-        
-        # Кнопка проверки
-        if st.button("Проверить ответы"):
-            st.subheader("Результаты")
-            
-            correct_count = 0
-            
-            for i, exercise in enumerate(st.session_state.exercises):
-                user_answer = st.session_state.user_answers[i].strip()
-                correct_answer = exercise.get("ответ", "").strip()
-                
-                if user_answer.lower() == correct_answer.lower():
-                    st.success(f"{i+1}. Правильно! Ответ: {correct_answer}")
-                    correct_count += 1
-                else:
-                    st.error(f"{i+1}. Неправильно. Ваш ответ: {user_answer}, Правильный ответ: {correct_answer}")
-            
-            # Итоговый результат
-            st.markdown(f"### Итог: {correct_count} из {len(st.session_state.exercises)} правильных ответов")
-            percentage = (correct_count / len(st.session_state.exercises)) * 100
-            st.progress(percentage / 100)
-            
-            if percentage == 100:
-                st.balloons()
-                st.markdown("## 🎉 Отлично! Все ответы правильные!")
-            elif percentage >= 70:
-                st.markdown("## 👍 Хороший результат!")
+            if user_answer.lower() == correct_answer.lower():
+                st.success(f"{i+1}. Правильно! Ответ: {correct_answer}")
+                correct_count += 1
             else:
-                st.markdown("## 📚 Продолжайте практиковаться!") 
+                st.error(f"{i+1}. Неправильно. Ваш ответ: {user_answer}, Правильный ответ: {correct_answer}")
+        
+        # Итоговый результат
+        st.markdown(f"### Итог: {correct_count} из {len(st.session_state.exercises)} правильных ответов")
+        percentage = (correct_count / len(st.session_state.exercises)) * 100
+        st.progress(percentage / 100)
+        
+        if percentage == 100:
+            st.balloons()
+            st.markdown("## 🎉 Отлично!")
+        elif percentage >= 70:
+            st.markdown("## 👍 Хороший результат!")
+        else:
+            st.markdown("## 📚 Продолжайте практиковаться!") 
